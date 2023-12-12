@@ -749,6 +749,9 @@ class BaseDiffusionManager(object):
 
 
 class ContinuousDiffusionManager(BaseDiffusionManager):
+    """
+    Define a manager to handle continuous time diffusion in continuous spaces.
+    """
     def diffusion_batch_loss(self, batch_data):
         """
         Return the batch loss for diffusion. 
@@ -1008,7 +1011,7 @@ class ContinuousDiffusionManager(BaseDiffusionManager):
             pred_epsilon_t_last = self.model_dict['denoising'](model_input_t_last, t_last)
 
         ###################################################################################################
-        ### Property guidance start
+        ### Property guidance - start
         ###################################################################################################
         # In case that the property model exists (i.e. is not None), determine 
         # the gradient of it w.r.t. to z_t_last
@@ -1062,7 +1065,7 @@ class ContinuousDiffusionManager(BaseDiffusionManager):
             #print(f"pred_epsilon_t_last[:10]: {pred_epsilon_t_last[:10]}")
 
         ###################################################################################################
-        ### Property guidance end
+        ### Property guidance - end
         ###################################################################################################
 
         # Determine several factors
@@ -1124,7 +1127,10 @@ class ContinuousDiffusionManager(BaseDiffusionManager):
         # corresponding to z_1 and return it
         return torch.normal(loc, std)
     
-class DiscreteDiffusionManager(BaseDiffusionManager):
+class Discrete1DDiffusionManager(BaseDiffusionManager):
+    """
+    Define a manager to handle continuous time diffusion in discrete 1D spaces.
+    """
     # Define a tiny number to be used for numerical stability (i.e. when dividing or taking logarithms)
     _eps = 1e-10
 
@@ -1207,6 +1213,28 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
         # Define a one-hot encoding for the x-values (i.e. categoricals)
         one_hot_encoding = encodings.OneHotEncoding1D(dim=self.x_enc_dim)
         self.encode_x    = lambda x: one_hot_encoding(x)
+
+        # Initialize the class attribute corresponding to the temperature used
+        # when using guided-sampling for the property(-guide) distribution to 1
+        self._guide_temp = 1
+
+    def set_guide_temp(self, guide_temp):
+        """ 
+        Set the value of the class attribute corresponding to the temperature 
+        used when using guided-sampling for the property(-guide) distribution.
+        """
+        # Check that guide_inv_temp is a zero or a positive number
+        if not isinstance(guide_temp, (int, float)):
+            err_msg = f"The input 'guide_temp' must be zero or a positive number (int or float), got type '{type(guide_temp)}' instead."
+            raise TypeError(err_msg)
+        
+        if guide_temp<0:
+            err_msg = f"The guide temperature must be zero or a positive number (int or float), got value '{guide_temp}' instead."
+            raise ValueError(err_msg)
+
+        # Set the class attribute
+        self._guide_temp = guide_temp
+
 
     def Q(self, t):
         """
@@ -1298,7 +1326,7 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
 
         # Determine the (batched) probability vector to jump from z_t to any other state
         # that will be a 2D torch tensor of shape (batch_size, self.x_enc_dim).
-        prob_vec_jump_z_t = self._get_jump_probs(batch_z_t, batch_R_t_z_t_vec)
+        prob_vec_jump_z_t = self._get_jump_prob_vec(batch_z_t, batch_R_t_z_t_vec)
 
         # Sample z_tilde_t from a categorical distribution with the probability vector p^{jump}_t[z_t]
         # that corresponds to p^{jump}_t(z_tilde_t|z_t).
@@ -1352,6 +1380,25 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
         return batch_loss_t
     
     def _get_Z_t_z_t(self, batch_z_t, batch_R_t_z_t_vec):
+        """
+        Return the total rate to transition out from (i.e. jump) a state 'z_t'
+        to any other state z at time t, i.e. Z_t(z_t) = \sum_{z!=z_t} R_t(z_t, z).
+
+        Remark: This method works both for forward or backward time rates!
+
+        Args:
+            batch_z_t (torch.tensor): The batched state from which to jump 
+                from as 2D torch tensor of shape (batch_size, #x-features).
+            batch_R_t_z_t_vec (torch.tensor): The transition rates R_t(z_t, z) 
+                at time t from z_t to any state z represented as vector 
+                R_t(z_t, :) for each point in the batch in the form of a torch 
+                tensor of shape (batch_size, self.x_enc_dim).
+
+        Return:
+            (torch.tensor): The jump rates out of state 'z_t' for each point in 
+                the batch as 1D tensor of shape (batch_size,).
+
+        """
         # Slice 'batch_R_t_z_t' that is now of shape (batch_size, self.x_enc_dim) once more along the last axis 
         # (axis=1 because axis is zero based), which is former axis=2 before the last slicing operation, by also 
         # fixing these indices to the sampled 'batch_z_t' resulting in a 1D torch tensor of shape (batch_size,)
@@ -1372,12 +1419,24 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
 
         return batch_Z_t_z_t
     
-    def _get_jump_probs(self, batch_z_start_t, batch_R_t_z_start_t_vec):
+    def _get_jump_prob_vec(self, batch_z_start_t, batch_R_t_z_start_t_vec):
         """
         Return the jump probabilities from a state z^{start}_t to any other
         state z^{end}_t!=z^{start}_t.
+        
+        Remark: This method works both for forward or backward time rates!
 
-        TODO: Finish docstring
+        Args:
+            batch_z_start_t (torch.tensor): The batched start state to jump 
+                from as 2D torch tensor of shape (batch_size, #x-features).
+            batch_R_t_z_start_t_vec (torch.tensor): The transition rates
+                R_t(z^{start}_t, z) at time t from z^start_t to any state z
+                represented as vector R_t(z^{start}_t, :) for each point in the 
+                batch in the form of a torch tensor of shape (batch_size, self.x_enc_dim).
+        
+        Return:
+            (torch.tensor): The jump probabilities from state z^{start}_t at time t
+                as 2D tensor of shape (batch_size, self.x_enc_dim)
 
         """
         # Calculate the jump-probabilities 
@@ -1406,7 +1465,7 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
 
         return prob_vec_jump_t_z_start_t
     
-    def _get_R_t_z_start_t_vec(self, batch_z_t, batch_t):
+    def _get_R_t_z_start_t_vec(self, batch_z_start_t, batch_t):
         """
         Return the forward rate vector R_t(z^{start}_t, z^{end}_t) that contains 
         the rates to transition from z^{start}_t to state z^{end}_t at time t, where
@@ -1418,10 +1477,13 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
                 The equivalent 'backward in time transition' would be from z^{end}_t to z^{start}_t.
         
         Args:
-            TODO: Specify arguments
+            batch_z_start_t (torch.tensor): The batched start state to jump from as 2D torch 
+                tensor of shape (batch_size, #x-features).
+            batch_t (torch.tensor): The batched time at which the jump occurs (for each point 
+                in the batch) as 2D torch tensor of shape (batch_size, 1).
         
         Return:
-            (torch.tensor): The batched forward transition rate vector R_t(z^{start}_t, :)
+            (torch.tensor): The batched forward transition rate vector R_t(z_t, :)
                 as 2D torch tensor of shape (batch_size, self.x_enc_dim).
 
         """
@@ -1436,8 +1498,8 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
         # values of 'batch_z_start_t' that will lead to a 2D torch tensor of shape (batch_size, self.x_enc_dim).
         # Remarks: (a) 'batch_z_start_t' is a 1D torch tensor of shape (batch_size,).
         #          (b) 'batch_R_t' is a 3D torch tensor of shape (batch_size, self.x_enc_dim, self.x_enc_dim).
-        #          (c) I.e. obtain the 2D torch tensor [R_t]_{:, batch_z_t, :} of shape (batch_size, self.x_enc_dim).
-        batch_R_t_z_start_t_vec = utils.slice_tensor(batch_R_t, batch_z_t, axis=1)
+        #          (c) I.e. obtain the 2D torch tensor [R_t]_{:, batch_z_start_t, :} of shape (batch_size, self.x_enc_dim).
+        batch_R_t_z_start_t_vec = utils.slice_tensor(batch_R_t, batch_z_start_t, axis=1)
         if self._debug:
             print(f"batch_R_t_z_start_t_vec.shape: {batch_R_t_z_start_t_vec.shape}")
             print(f"batch_R_t_z_start_t_vec[:10]:  {batch_R_t_z_start_t_vec[:10]}")
@@ -1452,12 +1514,21 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
         the entries of \hat{R}_t(z^{start}_t, z^{end}_t) correspond to each of the z^{end}_t,
         for one fixed starting state z^{start}_t.
 
-        Remark: z^{start}_t and z^{end}_t are both states at the same time that are separated
-                by a 'backward in time transition' from z^{start}_t to z^{end}_t.
-                The equivalent 'forward in time transition' would be from z^{end}_t to z^{start}_t.
+        Remarks: 
+        z^{start}_t and z^{end}_t are both states at the same time that are separated        
+        by a 'backward in time transition' from z^{start}_t to z^{end}_t.
+        The equivalent 'forward in time transition' would be from z^{end}_t to z^{start}_t.
         
         Args:
-            TODO: Specify arguments
+            batch_z_start_t (torch.tensor): The batched start state to jump from as 2D torch tensor 
+                of shape (batch_size, #x-features).
+            batch_t (torch.tensor): The batched time at which the jump occurs (for each point in the 
+                batch) as 2D torch tensor of shape (batch_size, 1).
+            train_or_eval (str): The 'train' or 'eval' mode to be used for the denoising model
+                when predicting the inverse/backward rate vector.
+            batch_y (None or torch.tensor): If not None, the property y as 2D torch tensor 
+                of shape (1, #y-features).
+                (Default: None)
         
         Return:
             (torch.tensor): The batched inverse/backward transition rate vector \hat{R}_t(z^{start}_t, :)
@@ -1643,7 +1714,7 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
 
         return z_t
 
-    def generate(self, batch_size=100, max_num_time_steps=100, num_integration_points=100, random_seed=24, y=None):
+    def generate(self, batch_size=100, max_num_time_steps=100, num_integration_points=100, random_seed=24, y=None, guide_temp=1):
         """
         Generate 'novel' points by sampling from p(z_1) and then using ancestral 
         sampling (backwards in time) to obtain 'novel' \hat{z}_0=\hat{x}.
@@ -1655,7 +1726,7 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
                 steps to use for backward propagation through time.
                 (Default: 100)
             num_integration_points (int): Number of integration points used to
-                approximate the integral \int_{t_last}^{t_next}\hat{Z}_s(z_t_last)ds
+                approximate the integral int_{t_last}^{t_next}\hat{Z}_s(z_t_last)ds
                 when sampling the next time t_next.
                 (Default: 100)
             random_seed (int): Random seed to be used for all the sampling in
@@ -1668,6 +1739,9 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
                 (batch_size, #x-features) generated in backward diffusion.
         
         """
+        # Set the property(-guide) distribution temperature
+        self.set_guide_temp(guide_temp)
+
         # Parse y if it is not None
         if y is not None:
             y = y*torch.ones(batch_size, dtype=torch.int).reshape(-1, 1)
@@ -1678,12 +1752,12 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
         # Individually generate every point of the batch
         x_generated_list = list()
         t_end_list       = list()
-        for _ in range(batch_size):
+        for batch_point in range(batch_size):
             # Generate a single point that will be a 2D tensor of shape (1, self.x_enc_dim).
             # Remark: The method '_generate_single_point' will return the last time step
             x_generated, t_end = self._generate_single_point(max_num_time_steps=max_num_time_steps, 
                                                              num_integration_points=num_integration_points, 
-                                                             y=y)
+                                                             y=y[batch_point])
 
             # If the last time step is 0, append the generated x
             if t_end==0:
@@ -1710,12 +1784,24 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
         Generate one single 'novel' point by sampling from p(z_1) and then using ancestral 
         sampling (backwards in time) to obtain the 'novel' \hat{z}_0=\hat{x}.
 
+        Remarks:
+        (1) Use backward sampling scheme proposed in 
+            'A Continuous Time Framework for Discrete Denoising Models'
+            (https://arxiv.org/pdf/2205.14987.pdf) by Campbell et al.,
+            where this sampling here corresponds to the first step where
+            the next time 't_next' (or equialently a holding time 
+            t_last-t_next) is sampled.
+
+        (2) Perform next=time sampling using the time-dependent Gillespie algorithm
+            'A modified Next Reaction Method for simulating chemical systems with time dependent 
+            propensities and delays' (https://arxiv.org/abs/0708.0370) by D. F. Anderson.
+
         Args:
             max_num_time_steps (int): Maximal number of ancestral sampling (time) 
                 steps to use for backward propagation through time.
                 (Default: 100)
             num_integration_points (int): Number of integration points used to
-                approximate the integral \int_{t_last}^{t_next}\hat{Z}_s(z_t_last)ds
+                approximate the integral int_{t_last}^{t_next}\hat{Z}_s(z_t_last)ds
                 when sampling the next time t_next.
                 (Default: 100)
             y (int or None): Conditional class to guide to.
@@ -1726,6 +1812,7 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
         
         """
         # Initialize the current (i.e. last) time 't_last' as 2D torch tensor of shape (1, 1) containing the value 1
+        # Remark: We always use times as 2D tensors of shape (batch_size, 1) but for the purpose here the batch_size is 1.
         t_last = torch.tensor(1).reshape(1, 1)
 
         # Sample z_(t=1)=z_1 and set it as the initial current (i.e. last) state 'z_t_last'
@@ -1739,7 +1826,7 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
             # Sample the next time, i.e. by holding the state z_t_last for the
             # holding time equals to t_last-t_next
             # Remark: We sample backward in time, so t_last>t_next
-            t_next = self._backward_sample_t_next(t_last.item(), z_t_last, num_integration_points=num_integration_points)
+            t_next = self._backward_sample_t_next(t_last, z_t_last, num_integration_points=num_integration_points)
             if self._debug:
                 print(f"t_last.shape: {t_last.shape}")
                 print(f"t_last:       {t_last}")
@@ -1771,21 +1858,36 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
         The state z_t_last stays the same for the holding time given by the difference
         of t_last and t_next.
 
-        Remark:
-        Use (unguided) backward sampling scheme proposed in 
-        'A Continuous Time Framework for Discrete Denoising Models'
-        (https://arxiv.org/pdf/2205.14987.pdf) by Campbell et al.,
-        where this sampling here corresponds to the first step where
-        the next time 't_next' (or equialently a holding time 
-        t_last-t_next) is sampled.
+        Remarks:
+        (1) Use backward sampling scheme proposed in 
+            'A Continuous Time Framework for Discrete Denoising Models'
+            (https://arxiv.org/pdf/2205.14987.pdf) by Campbell et al.,
+            where this sampling here corresponds to the first step where
+            the next time 't_next' (or equialently a holding time 
+            t_last-t_next) is sampled.
 
-        TODO: Complete docstring.
+        (2) Perform the first part of the time-dependent Gillespie algorithm
+            in this method using 'A modified Next Reaction Method for simulating 
+            chemical systems with time dependent propensities and delays' 
+            (https://arxiv.org/abs/0708.0370) by D. F. Anderson.
+            => Sample u from Uniform(0, 1)
+            => Find t_next that fulfills -log(u)=int_{t_last}^{t_next}\hat{Z}_s(z_t_last)ds.
+
+        (3) t_next<t_last because we are sampling backwards in time.
         
         Args:
+            t_last (torch.tensor): The current (i.e. last) time as 2D torch tensor
+                of shape (1, 1).
+            z_t_last (torch.tensor): The current (i.e. last) state at time 't_last'
+                that is holded until the next time 't_next' (sampled here) as
+                2D torch tensor of shape (1, #x-features). 
             num_integration_points (int): Number of integration points used to
-                approximate the integral \int_{t_last}^{t_next}\hat{Z}_s(z_t_last)ds
+                approximate the integral int_{t_last}^{t_next}\hat{Z}_s(z_t_last)ds
                 when sampling the next time t_next.
                 (Default: 100)
+
+        Return:
+            (torch.tensor): Sampled next time as 2D torch tensor of shape (1, 1).
         
         """
         
@@ -1797,10 +1899,13 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
             print(f"expanded_z_t_last[:10]: {expanded_z_t_last[:10]}")
 
         # Determine the time integration points {t_j}_{j=0}^{N-1} where t_0=t_last and t_{N-1}=0 
-        # and the absolute values of their time-differences, i.e. t_diff_j = |t_{j+1}-t_{j}|
-        t_intpnts = torch.linspace(t_last, 0, num_integration_points).reshape(-1, 1)
-        t_diff    = torch.abs(torch.diff(t_intpnts.squeeze()))
+        # Remark: t_last is a 2D tensor of shape (1, 1), use its value [].item()] as float for torch.linspace.
+        t_intpnts = torch.linspace(t_last.item(), 0, num_integration_points).reshape(-1, 1)
 
+        # Also determine the absolute values of their time-differences, i.e. t_diff_j = |t_{j+1}-t_{j}|
+        # Remark: As we are going backward in time 'torch.diff(t_intpnts.squeeze())' only
+        #         contains negative values
+        t_diff = torch.abs( torch.diff(t_intpnts.squeeze()) )
         if self._debug:
             print(f"t_intpnts.shape: {t_intpnts.shape}")
             print(f"t_intpnts[:10]:  {t_intpnts[:10]}")
@@ -1825,9 +1930,9 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
             print(f"hat_Z_t_intpnts_z_t_last[:10]:  {hat_Z_t_intpnts_z_t_last[:10]}")
             print(f"hat_Z_t_intpnts_z_t_last[-10:]: {hat_Z_t_intpnts_z_t_last[-10:]}")
 
-
-        # Numerically integrate (using the trapezoidal rule) every time-interval bounded
-        # by the time integration points, i.e. every intergral between t_j and t_{j+1}
+        # Numerically integrate (using the trapezoidal rule) \hat{Z}_s(z_t_last) in every 
+        # time-interval bounded by the time integration points, i.e. determine the integrals
+        # int_{t_j}^{t_{j+1}}\hat{Z}_s(z_t_last)ds
         integ_subint_t_intpnts = (hat_Z_t_intpnts_z_t_last[1:]+hat_Z_t_intpnts_z_t_last[:-1])/2*t_diff
         if self._debug:
             print(f"integ_subint_t_intpnts.shape: {integ_subint_t_intpnts.shape}")
@@ -1835,10 +1940,12 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
 
         # Cummulating the intergrals of these time-intervals determine the numerical 
         # approximation of the integral from t_last up to any of the time integration 
-        # points, i.e. int_{t_last}^{t_j} for any j>0:
+        # points, i.e. int_{t_last}^{t_j}\hat{Z}_s(z_t_last)ds for any j>0:
         integ_t_intpnts = torch.cumsum(integ_subint_t_intpnts, dim=0)
 
-        # At t_0=t_last, the integral is 0, so add this integral as the first integral entry
+        # At t_0=t_last, the integral is 0 because int_{a}^{a}f(s)ds=0 for any function f(s) and 
+        # any integration boundary point a. Thus, add 0 as the first integral entry for the integral
+        # up to t_0 (=t_last)
         integ_t_intpnts = torch.cat([torch.tensor(0).reshape(-1, 1), integ_t_intpnts.reshape(-1, 1)]).squeeze()
         if self._debug:
             print(f"t_intpnts[:10]: {t_intpnts[:10]}")
@@ -1933,7 +2040,7 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
         (i.e. z_t_last!=z_t_next).
         
         Remark:
-        Use (unguided) backward sampling scheme proposed in 
+        Use backward sampling scheme proposed in 
         'A Continuous Time Framework for Discrete Denoising Models'
         (https://arxiv.org/pdf/2205.14987.pdf) by Campbell et al.,
         where this sampling here corresponds to the second part where 
@@ -1941,8 +2048,6 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
         at time 't_next' (after holding for the time t_last-t_next).
         => The input 't_last' is not used within this method but kept for 
            consistency with the corresponding method in the continuous space case.
-
-        TODO: Check and complete docstring.
 
         Args:
             z_t_last (torch.tensor): The last (i.e. current) z_t as 2D torch 
@@ -1957,12 +2062,6 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
                 same shape as the last (i.e. current) 'z_t_last'.
 
         """
-        # Parse y if it is not None
-        if y is not None:
-            # TODO: Implement property guidance
-            raise NotImplementedError("Property guidance has not been implemented for discrete diffusion so far.")
-            #y = y*torch.ones(batch_size, dtype=torch.int).reshape(-1, 1)
-
         # Determine the backward transition rate vector \hat{R}_{t_{next}}(z_t, :)
         hat_R_t_next_z_t_vec = self._predict_hat_R_t_z_start_t_vec(z_t_last, t_next, train_or_eval='eval')
         if self._debug:
@@ -1970,10 +2069,116 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
             print(f"hat_R_t_next_z_t_vec[:10]:  {hat_R_t_next_z_t_vec[:10]}")
 
         # Determine the probability vector to jump from z_t_last to a new state at time t_next
-        prob_vec_jump_t_next_z_t_last = self._get_jump_probs(z_t_last, hat_R_t_next_z_t_vec)
+        prob_vec_jump_t_next_z_t_last = self._get_jump_prob_vec(z_t_last, hat_R_t_next_z_t_vec)
         if self._debug:
             print(f"prob_vec_jump_t_next_z_t_last.shape: {prob_vec_jump_t_next_z_t_last.shape}")
             print(f"prob_vec_jump_t_next_z_t_last: {prob_vec_jump_t_next_z_t_last}")
+
+        ###################################################################################################
+        ### Property guidance - start
+        ###################################################################################################
+        # In case that the property model exists (i.e. is not None), determine 
+        # the gradient of it w.r.t. to z_t_last
+        if self.model_dict['property'] is not None:   
+            if y is None:
+                err_msg = f"Can only use property guidance in case that 'y' is passed to 'generate' method."
+                raise ValueError(err_msg)
+            
+            # Create a torch tensor with all the transition states that can be accessed from z_t_last
+            # as 2D torch tensor of shape (#transitions, #x-features), which included z_t_last itself.
+            z_t_from_z_t_last = torch.arange(self.x_enc_dim).reshape(-1, 1)
+            if self._debug:
+                print(f"z_t_from_z_t_last.shape: {z_t_from_z_t_last.shape}")
+                print(f"z_t_from_z_t_last[:10]:  {z_t_from_z_t_last[:10]}")
+                print(f"y.shape: {y.shape}") 
+                print(f"y: {y}")
+
+            # Expand the next time to 
+            expanded_t_next = t_next.expand(z_t_from_z_t_last.shape[0], -1)
+            if self._debug:
+                print(f"expanded_t_next.shape: {expanded_t_next.shape}")
+                print(f"expanded_t_next[:10]:  {expanded_t_next[:10]}")
+
+            # Expand the y values
+            expanded_y = y.expand(z_t_from_z_t_last.shape[0], -1)
+            if self._debug:
+                print(f"expanded_y.shape: {expanded_y.shape}")
+                print(f"expanded_y[:10]:  {expanded_y[:10]}")
+
+            # Determine the log-probability (i.e. log-likelihood) of the property 
+            # model for each of the jump states. The result 'log_prob' will be a 
+            # 1D torch tensor of shape (batch_size,)
+            log_prob = self.model_dict['property'].log_prob(z_t_from_z_t_last, expanded_t_next, expanded_y)
+            if self._debug:
+                print(f"log_prob.shape: {log_prob.shape}")
+                print(f"log_prob[:10]:  {log_prob[:10]}")
+                print(f"prob.shape:     {torch.exp(log_prob).shape}")
+                print(f"prob[:10]:      {torch.exp(log_prob)[:10]}")
+                print(f"[raw]prob_vec_jump_t_next_z_t_last.shape: {prob_vec_jump_t_next_z_t_last.shape}")
+                print(f"[raw]prob_vec_jump_t_next_z_t_last[:10]:  {prob_vec_jump_t_next_z_t_last[:10]}")
+
+            # Update the transition probabilities
+            # (i.e. actually the jump probabilities because the probability to transition to the same state is 0)
+            # by multiplying them with the property(-guide) distribution (i.e. the likelihood)
+            # p^{jump-updated}(z|z_t_last) = [p^{jump}(z|z_t_last)*p^{property}(y|z)]/[ Sum_{z} p^{jump}(z|z_t_last)*p^{property}(y|z) ]
+            # Differ cases depending on the guide temperature
+            if self._guide_temp==0:
+                # If the temperature guide distribution is 0, the jump probability to the state with the 
+                # maximum of the property(-guide) distribution (leaving out the state corresponding to 
+                # z_t_last) is 1 and all the other probabilities are zero.
+                # First, determine the probabilities
+                prob = torch.exp(log_prob)
+
+                # First, set the log-probabilities corresponding to z_t_last to 0.
+                delta_z_t_next_z_t_last = self.encode_x(z_t_last)
+                prob                    = (1-delta_z_t_next_z_t_last)*prob
+
+                # Second, update 'prob_vec_jump_t_next_z_t_last' to be a zeros tensor that has
+                # only a 1 at for the state-entry (along second axis) that corresponds to the 
+                # maximum of prob.
+                ix = torch.argmax(prob).reshape(1, -1)
+                prob_vec_jump_t_next_z_t_last        = torch.zeros_like(prob_vec_jump_t_next_z_t_last)
+                prob_vec_jump_t_next_z_t_last[:, ix] = 1
+
+            else:
+                # Case where the temperature of the guide distribution is finite
+                # First, calculate the element-wise log-product using the log(a*b)=log(a)+log(b) trick
+                # Remark: We do not use 'utils.expaddlog' here because log_prob is already a logarithm and because
+                #         here a and b are both non-negative (so we do not have to take care of their sign).
+                #         Use tiny value in logarithm for numerical stability.
+                #prob_vec_jump_t_next_z_t_last = torch.exp( torch.log(prob_vec_jump_t_next_z_t_last+self._eps) + log_prob )
+                #prob_vec_jump_t_next_z_t_last = utils.expaddlog(prob_vec_jump_t_next_z_t_last, torch.exp(log_prob/self._guide_temp))
+                log_prob_vec_jump_t_next_z_t_last = torch.log(prob_vec_jump_t_next_z_t_last+self._eps) + log_prob/self._guide_temp
+
+                # Second, shift the log-probabilities so that their maximum is 0 (i.e. the corresponding non-log value is 1)
+                # and compute the exponential.
+                # Remark: Perform 'maximum shift trick' for numerical stability as exp(f(x))/sum_{x'}exp(f(x')) is invariant under any shifts.
+                #         When calculating the maximum, calculate it over the state (i.e. second) axis as 'prob_vec_jump_t_next_z_t_last'
+                #         and thus also its logarithm will have shape (1, self.x_enc_dim).
+                log_prob_vec_jump_t_next_z_t_last = log_prob_vec_jump_t_next_z_t_last - torch.max(log_prob_vec_jump_t_next_z_t_last, dim=1).values
+                prob_vec_jump_t_next_z_t_last     = torch.exp(log_prob_vec_jump_t_next_z_t_last)
+
+                # Third, set the probabilities corresponding to z_t_last to 0
+                # Remark: Not using the a*b=exp(log(a)+log(b)) trick would ensure this trivially
+                #         as the non-updated jump probability will be zero for z_t_last.
+                #         Although 'utils.expaddlog' might also return a zero value for z_t_last,
+                #         it is good idea to 'hard enforce' this here explicitly.
+                delta_z_t_next_z_t_last       = self.encode_x(z_t_last)
+                prob_vec_jump_t_next_z_t_last = (1-delta_z_t_next_z_t_last)*prob_vec_jump_t_next_z_t_last
+            
+                # Fourth, normalize the probabilities
+                prob_vec_jump_t_next_z_t_last = prob_vec_jump_t_next_z_t_last/torch.sum(prob_vec_jump_t_next_z_t_last)
+            
+            # Display results for the user
+            if self._debug:
+                print(f"[guided]prob_vec_jump_t_next_z_t_last.shape: {prob_vec_jump_t_next_z_t_last.shape}")
+                print(f"[guided]prob_vec_jump_t_next_z_t_last[:10]:  {prob_vec_jump_t_next_z_t_last[:10]}")
+
+            #raise ValueError("AM HERE")
+
+        ###################################################################################################
+        ### Property guidance -end
+        ###################################################################################################
 
         # Sample z_t_next from a categorical distribution with the probability vector p^{jump}_{t_next}[z_t_last]
         # that corresponds to p^{jump}_{t_next}(z^{jump}_t_{next}|z_t_last).
@@ -2319,7 +2524,7 @@ class DiscreteDiffusionManager(BaseDiffusionManager):
     #         print(f"batch_hat_R_t_z_t_vec[:10]:  {batch_hat_R_t_z_t_vec[:10]}")
 
     #         # B2) Determine the probability vector to jumpt to a new state for each point in the batch
-    #         prob_vec_jump_z_t = self._get_jump_probs(batch_z_t, batch_hat_R_t_z_t_vec)
+    #         prob_vec_jump_z_t = self._get_jump_prob_vec(batch_z_t, batch_hat_R_t_z_t_vec)
 
     #         # B3) Sample z^{jump}_t from a categorical distribution with the probability vector p^{jump}_t[z_t]
     #         #     that corresponds to p^{jump}_t(z^{jump}_t|z_t).

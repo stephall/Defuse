@@ -1,3 +1,3 @@
-(1) Refactor 'DiscreteDiffusionManager' and check docstrings (correcteness and completeness) of its methods
-(2) Implement property guidance for discrete state space diffusion
-(3) Generalize code to multi-dimensional discrete state spaces
+(1) Refactorize folder structure.
+(2) Generalize code to multi-dimensional discrete state spaces.
+(3) Implement 'temperature sampling' for property-guidance for diffusion in continuous state spaces.
