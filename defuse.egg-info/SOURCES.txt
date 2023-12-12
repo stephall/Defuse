@@ -1,0 +1,5 @@
+setup.py
+defuse.egg-info/PKG-INFO
+defuse.egg-info/SOURCES.txt
+defuse.egg-info/dependency_links.txt
+defuse.egg-info/top_level.txt
