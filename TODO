@@ -1,3 +1,2 @@
-(1) Refactorize folder structure.
-(2) Generalize code to multi-dimensional discrete state spaces.
-(3) Implement 'temperature sampling' for property-guidance for diffusion in continuous state spaces.
+(1) Generalize code to multi-dimensional discrete state spaces.
+(2) Implement 'temperature sampling' for property-guidance for diffusion in continuous state spaces.
