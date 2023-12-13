@@ -636,19 +636,21 @@ class Discrete1DDiffusionManager(base_diffusion_manager.BaseDiffusionManager):
         # Set a random seed
         self.set_random_seed(random_seed)
 
-        # Individually generate every point of the batch
-        x_generated_list = list()
-        t_end_list       = list()
-        for batch_point in range(batch_size):
-            # Generate a single point that will be a 2D tensor of shape (1, self.x_enc_dim).
-            # Remark: The method '_generate_single_point' will return the last time step
-            x_generated, t_end = self._generate_single_point(max_num_time_steps=max_num_time_steps, 
-                                                             num_integration_points=num_integration_points, 
-                                                             y=y[batch_point])
+        # We don't need to calculate any gradients for discrete generation
+        with torch.no_grad():
+            # Individually generate every point of the batch
+            x_generated_list = list()
+            t_end_list       = list()
+            for batch_point in range(batch_size):
+                # Generate a single point that will be a 2D tensor of shape (1, self.x_enc_dim).
+                # Remark: The method '_generate_single_point' will return the last time step
+                x_generated, t_end = self._generate_single_point(max_num_time_steps=max_num_time_steps, 
+                                                                num_integration_points=num_integration_points, 
+                                                                y=y[batch_point])
 
-            # If the last time step is 0, append the generated x
-            if t_end==0:
-                x_generated_list.append(x_generated)
+                # If the last time step is 0, append the generated x
+                if t_end==0:
+                    x_generated_list.append(x_generated)
 
         # Cast the generated points to a 2D tensor of shape (#batch_size-#non_converged, self.x_enc_dim)
         # where #non_converged is the number of points for which the final time was not 0
