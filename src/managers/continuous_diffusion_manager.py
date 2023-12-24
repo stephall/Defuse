@@ -387,3 +387,28 @@ class ContinuousDiffusionManager(base_diffusion_manager.BaseDiffusionManager):
         # distribution and cast into a tensor of shape (batch_size, #x-features) 
         # corresponding to z_1 and return it
         return torch.normal(loc, std)
+    
+    def _get_property_model_log_prob(self, batch_z_t, batch_t, batch_y):
+        """
+        Return the log probability of the property log model.
+        
+        Args:
+            batch_z_t (torch.tensor): (Batched) state z_t as 2D torch tensor
+                of shape (batch_size, state_space_dimension).
+            batch_t (torch.tensor): (Batched) time as 2D torch tensor
+                of shape (batch_size, 1).
+            batch_y (torch.tensor): (Batched) property values as 2D torch tensor
+                of shape (batch_size, #y-features).
+
+        Return:
+            (torch.tensor): Log probability of the property model for the inputs
+                as 1D torch tensor of shape (batch_size,)
+        
+        """
+        # Set the property model into 'train mode'
+        self.model_dict['property'].train()
+        
+        # Determine the log-probability (i.e. log-likelihood) of the property 
+        # model for the batch data for each point in the batch, i.e. log_prob 
+        # is a 1D torch tensor of shape (batch_size,)
+        return self.model_dict['property'].log_prob(batch_z_t, batch_t, batch_y)

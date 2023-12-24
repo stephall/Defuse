@@ -1,2 +1,16 @@
-(1) Generalize code to multi-dimensional discrete state spaces.
-(2) Implement 'temperature sampling' for property-guidance for diffusion in continuous state spaces.
+Global:
+(G1) Use one-hot encoding from some package (ideally torch).
+(G2) Change from 'sum over batch' loss to 'mean over batch' loss while re-scaling the loss of the last batch in case that it is smaller than the other batches.
+(G3) Implement random fourier features for time-encoding.
+(G4) Enable use of GPU.
+(G5) Add tests.
+
+Discrete state space diffusion:
+(D1) Currently, we are applying the denoising and property model for the current state dim[discrete_state_space]-times, change it to only once.
+(D2) Cleanup comments (condense and check for relevance), check docstrings, and refactor if necessary.
+(D3) Smoother initialization for multi-dim discrete diffusion manager (i.e. how to pass p_vec_1_list, cardinalities etc.) and synergy with initialization of the denoising and property models.
+(D4) Apply 'proper guidance' (see derivation on external notes).
+(D5) Implement different generation strategies/schemes (different next-time sampling strategies and the predefined time-step strategy).
+
+Continuous state space diffusion:
+(C1) Implement 'temperature sampling' for property-guidance for diffusion in continuous state spaces.

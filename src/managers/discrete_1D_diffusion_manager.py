@@ -73,13 +73,13 @@ class Discrete1DDiffusionManager(base_diffusion_manager.BaseDiffusionManager):
             print(f"_prob_vec_1.shape: {_prob_vec_1.shape}")
             print(f"_prob_vec_1: {_prob_vec_1}")
         A_1 = torch.ones(_prob_vec_1.shape[0], 1)*_prob_vec_1.reshape(1, -1)
-        I   = torch.eye(_prob_vec_1.shape[0])
+        Id  = torch.eye(_prob_vec_1.shape[0])
 
-        # Make the tensors (i.e. matrices) A_1 and I of shape (self.x_enc_dim, self.x_enc_dim)
+        # Make the tensors (i.e. matrices) A_1 and Id of shape (self.x_enc_dim, self.x_enc_dim)
         # tensors of shape (1, self.x_enc_dim, self.x_enc_dim) and assign them to their
-        # corresponding class attributes. Also define R_b = I - A
+        # corresponding class attributes. Also define R_b = A_1 - Id
         self.A_1 = torch.unsqueeze(A_1, dim=0)
-        self.Id  = torch.unsqueeze(I, dim=0)
+        self.Id  = torch.unsqueeze(Id, dim=0)
         self.R_b = self.A_1-self.Id
         if self._debug:
             print(f"self.R_b: {self.R_b}")
@@ -451,9 +451,9 @@ class Discrete1DDiffusionManager(base_diffusion_manager.BaseDiffusionManager):
         
         # Construct the model input for the current batch
         if batch_y is not None:
-            batch_model_input = {'x': batch_z_start_t, 'y': batch_y}
+            batch_model_input = {'x': self.encode_x(batch_z_start_t), 'y': batch_y}
         else:
-            batch_model_input = {'x': batch_z_start_t}
+            batch_model_input = {'x': self.encode_x(batch_z_start_t)}
 
         # Set the denoising model into 'train mode' or 'eval mode'
         if train_or_eval=='train':
@@ -975,21 +975,25 @@ class Discrete1DDiffusionManager(base_diffusion_manager.BaseDiffusionManager):
             
             # Create a torch tensor with all the transition states that can be accessed from z_t_last
             # as 2D torch tensor of shape (#transitions, #x-features), which included z_t_last itself.
-            z_t_from_z_t_last = torch.arange(self.x_enc_dim).reshape(-1, 1)
+            # Encode this transition index.
+            z_t_from_z_t_last         = torch.arange(self.x_enc_dim).reshape(-1, 1)
+            z_t_from_z_t_last_encoded = self.encode_x(z_t_from_z_t_last)
             if self._debug:
                 print(f"z_t_from_z_t_last.shape: {z_t_from_z_t_last.shape}")
                 print(f"z_t_from_z_t_last[:10]:  {z_t_from_z_t_last[:10]}")
+                print(f"z_t_from_z_t_last_encoded.shape: {z_t_from_z_t_last_encoded.shape}")
+                print(f"z_t_from_z_t_last_encoded[:10]:  {z_t_from_z_t_last_encoded[:10]}")
                 print(f"y.shape: {y.shape}") 
                 print(f"y: {y}")
 
             # Expand the next time to 
-            expanded_t_next = t_next.expand(z_t_from_z_t_last.shape[0], -1)
+            expanded_t_next = t_next.expand(z_t_from_z_t_last_encoded.shape[0], -1)
             if self._debug:
                 print(f"expanded_t_next.shape: {expanded_t_next.shape}")
                 print(f"expanded_t_next[:10]:  {expanded_t_next[:10]}")
 
             # Expand the y values
-            expanded_y = y.expand(z_t_from_z_t_last.shape[0], -1)
+            expanded_y = y.expand(z_t_from_z_t_last_encoded.shape[0], -1)
             if self._debug:
                 print(f"expanded_y.shape: {expanded_y.shape}")
                 print(f"expanded_y[:10]:  {expanded_y[:10]}")
@@ -997,7 +1001,7 @@ class Discrete1DDiffusionManager(base_diffusion_manager.BaseDiffusionManager):
             # Determine the log-probability (i.e. log-likelihood) of the property 
             # model for each of the jump states. The result 'log_prob' will be a 
             # 1D torch tensor of shape (batch_size,)
-            log_prob = self.model_dict['property'].log_prob(z_t_from_z_t_last, expanded_t_next, expanded_y)
+            log_prob = self.model_dict['property'].log_prob(z_t_from_z_t_last_encoded, expanded_t_next, expanded_y)
             if self._debug:
                 print(f"log_prob.shape: {log_prob.shape}")
                 print(f"log_prob[:10]:  {log_prob[:10]}")
@@ -1109,6 +1113,34 @@ class Discrete1DDiffusionManager(base_diffusion_manager.BaseDiffusionManager):
         batch_z_1       = batch_p_1_distr.sample()
 
         return batch_z_1
+    
+    def _get_property_model_log_prob(self, batch_z_t, batch_t, batch_y):
+        """
+        Return the log probability of the property log model.
+        
+        Args:
+            batch_z_t (torch.tensor): (Batched) state z_t as 2D torch tensor
+                of shape (batch_size, 1).
+            batch_t (torch.tensor): (Batched) time as 2D torch tensor
+                of shape (batch_size, 1).
+            batch_y (torch.tensor): (Batched) property values as 2D torch tensor
+                of shape (batch_size, #y-features).
+
+        Return:
+            (torch.tensor): Log probability of the property model for the inputs
+                as 1D torch tensor of shape (batch_size,)
+        
+        """
+        # Set the property model into 'train mode'
+        self.model_dict['property'].train()
+
+        # Encode z_t
+        batch_z_t_encoded = self.encode_x(batch_z_t)
+        
+        # Determine the log-probability (i.e. log-likelihood) of the property 
+        # model for the batch data for each point in the batch, i.e. log_prob 
+        # is a 1D torch tensor of shape (batch_size,)
+        return self.model_dict['property'].log_prob(batch_z_t_encoded, batch_t, batch_y)
     
 ###################################################################################################
 ### DISCRETE DIFFUSION METHODS SIDETRACK

@@ -513,11 +513,11 @@ class BaseDiffusionManager(object):
         plt.figure(figsize=(6, 6))
         plt.plot(epoch_loss_list, 'b-')
         plt.xlabel('Epoch')
-        plt.ylabel('Loss (rolling)')
+        plt.ylabel('Loss (moving average)')
         y_min = min([0, np.min(epoch_loss_list)*1.1])
         plt.ylim([y_min, np.mean(epoch_loss_list[1:])*3])
         plt.show()
-        print(f"Last (rolling epoch) loss: {epoch_loss_list[-1]}")
+        print(f"Last epoch loss (moving average): {epoch_loss_list[-1]}")
 
     def train_on_batch(self, batch_data, which_model):
         """"
@@ -625,15 +625,9 @@ class BaseDiffusionManager(object):
         # Remark: 'self.forward_sample_z_t' returns the state and the noise 'epsilon'
         batch_z_t = self.forward_sample_z_t(batch_x, batch_t)
 
-
-        # Set the property model into 'train mode'
-        self.model_dict['property'].train()
+        # Get the log-probability of the property model as 1D torch tensor of shape (batch_size,)
+        log_prob = self._get_property_model_log_prob(batch_z_t, batch_t, batch_y)
         
-        # Determine the log-probability (i.e. log-likelihood) of the property 
-        # model for the batch data for each point in the batch, i.e. log_prob 
-        # is a 1D torch tensor of shape (batch_size,)
-        log_prob = self.model_dict['property'].log_prob(batch_z_t, batch_t, batch_y)
-
         # The loss is given by the negative log-probability summed over the 
         # entire batch
         loss = -torch.sum(log_prob)
@@ -743,3 +737,9 @@ class BaseDiffusionManager(object):
         I.i.d. drawn z_1 for each point in a batch. 
         """
         raise NotImplementedError("The method '_sample_z_1' must be implemented by any derived class.")
+    
+    def _get_property_model_log_prob(self, batch_z_t, batch_t, batch_y):
+        """
+        Return the log probability of the property log model.
+        """
+        raise NotImplementedError("The method '_get_property_model_log_prob' must be implemented by any derived class.")

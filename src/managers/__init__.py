@@ -11,3 +11,8 @@ from src.managers.continuous_diffusion_manager import ContinuousDiffusionManager
 from src.managers import discrete_1D_diffusion_manager
 reload(discrete_1D_diffusion_manager)
 from src.managers.discrete_1D_diffusion_manager import Discrete1DDiffusionManager
+
+# Discrete (multi-dim) space diffusion manager
+from src.managers import discrete_diffusion_manager
+reload(discrete_diffusion_manager)
+from src.managers.discrete_diffusion_manager import DiscreteDiffusionManager

@@ -112,6 +112,94 @@ def slice_tensor(tensor, inds, axis=1):
         
         return sliced_tensor
 
+def batched_matmul(a, b):
+    """
+    Perform batch matrix multiplication of the two torch tensors a and b.
+
+    Args:
+        a (torch.tensor): First input tensor either as 2D torch tensor of shape 
+            (batch_size, N) or as 3D torch tensor of shape (batch_size, A, N).
+        b (torch.tensor): Second input tensor  either as 2D torch tensor of shape 
+            (batch_size, N) or as 3D torch tensor of shape (batch_size, N, B).
+
+    Return:
+        (torch.tensor): Matrix multiplication of a@b for each point in the batch,
+            i.e. [a_1@b_1, a_2@b_2, ...a_{batch_size}@b_{batch_size}], as 
+            - 1D torch tensor of shape (batch_size,) if a and b are 2D tensors
+                [result is equivalent to torch.einsum('kn,kn->k', a, b) where 'k' is the batch index]
+            - 2D torch tensor of shape (batch_size, A) if a is 3D and b 2D tensor,
+                [result is equivalent to torch.einsum('kmn,kn->km', a, b) where 'k' is the batch index]
+            - 2D torch tensor of shape (batch_size, B) if a is 2D and b 3D tensor or
+                [result is equivalent to torch.einsum('kn,knm->km', a, b) where 'k' is the batch index]
+            - 3D torch tensor of shape (batch_size, A, B) if a is 3D and b 3D tensor.
+                [result is equivalent to torch.einsum('kmn,knp->kmp', a, b) where 'k' is the batch index]
+
+    Remarks: (1) This function internally uses 'torch.bmm' that works for sparse torch tensors.
+             (2) Note that 'torch.einsum' does not work for sparse torch tensors (status Dec 2023).
+             (3) 'torch.bmm' requires 3D input torch tensors and also returns a 3D torch tensor.
+                  => Bring a and b into proper 3D form (if they are not already) and squeeze the
+                     result of 'torch.bmm' to the shape specified in 'Return' above. 
+
+    """
+    # Check that the batch (i.e. first) axis of both a and b has the same length
+    if a.shape[0]!=b.shape[0]:
+        err_msg = f"The batch (i.e. first) axis of both input tensors must have the same length, but got 'a.shape[0]={a.shape[0]}' and 'b.shape[0]={b.shape[0]}' instead."
+        raise ValueError(err_msg)
+    
+    batch_size = a.shape[0]
+
+    # Parse input tensor a
+    if a.dim()==2:
+        # If a is 2D tensor of shape (batch_size, N), unsqueeze it (along the second axis, i.e. creating a new second axis
+        # making the previous axis the new third axis) to 3D torch tensor of shape (batch_size, 1, N)
+        _a = torch.unsqueeze(a, dim=1)
+    elif a.dim()==3:
+        # If a is 3D tensor, it is already in the correct shape
+        _a = a
+    else:
+        err_msg = f"The first input torch tensor ('a') must be 2D or 3D, got dimension '{a.dim()}' instead." 
+        raise ValueError(err_msg)
+
+    # Parse input tensor b
+    if b.dim()==2:
+        # If b is 2D tensor of shape (batch_size, N), unsqueeze it (along the third axis, i.e. creating a new third axis) 
+        # to 3D torch tensor of shape (batch_size, N, 1)
+        _b = torch.unsqueeze(b, dim=2)
+    elif b.dim()==3:
+        # If b is 3D tensor, it is already in the correct shape
+        _b = b
+    else:
+        err_msg = f"The second input torch tensor ('b') must be 2D or 3D, got dimension '{b.dim()}' instead." 
+        raise ValueError(err_msg)
+    
+    # Check that the shared axis over which matrix multiplication is performed has the same length
+    if _a.shape[2]!=_b.shape[1]:
+        err_msg = f"The shared axis of the both input tensors must have the same length, but got '{_a.dim[2]}' for the first input and '{_b.dim[1]}' for the second input."
+        raise ValueError(err_msg)
+
+    # Calculate the batched matrix multiplication of a and b, squeeze the result and return it
+    # Remarks: (1) torch.bmm(a, b) does not work if b is sparse, in this case calculate
+    #              a@b = (b^T@a^T)^T were ()^T is transposition of the non-batch axes, i.e.
+    #              if a is of shape (batch_size, A, N) then a^T is of shape (batch_size, N, A).
+    #          (2) 'squeeze' will squeeze the result to the minimal dimension, e.g. a torch tensor
+    #              of shape (batch_size, 1, 1) to (batch_size,).
+    if _b.is_sparse==False:
+        ab = torch.bmm(_a, _b).squeeze()
+    else:
+        # If _b is sparse, transpose _a and _b in the two non-batch axes, perfrom batched matrix
+        # multiplication and then transpose the two non-batch axes of the resulting tensor.
+        _a_transposed = torch.transpose(_a, 1, 2)
+        _b_transposed = torch.transpose(_b, 1, 2)
+        ab_transposed = torch.bmm(_b_transposed, _a_transposed)
+        ab = torch.transpose(ab_transposed, 1, 2).squeeze()
+
+    # In case that the batch_size is 1, squeezing will remove the batch axis, thus
+    # unsqueeze ab (adding the batch axis again as first axis) if is this case
+    if batch_size==1:
+        ab = torch.unsqueeze(ab, dim=0)
+
+    return ab
+
 def expaddlog(a, b, eps=1e-15):
     """ 
     Perform multiplication of two tensors a and b using the exp-log trick:

@@ -23,10 +23,6 @@ class DenoisingModel(torch.nn.Module):
         # Define the input and output dimension, based on the
         self.input_dim  = x_enc_dim + t_dim
 
-        # Define an encoding for the x-values (i.e. categoricals)
-        spatial_encoding  = encodings.OneHotEncoding1D(dim=self.x_enc_dim)
-        self.encode_space = lambda x: spatial_encoding(x)
-
         # Define an encoding for the times (passed as scalars)
         time_encoding    = encodings.MultiLinearEncoding1D(dim=self.t_dim)
         self.encode_time = lambda t: time_encoding(t)
@@ -39,9 +35,6 @@ class DenoisingModel(torch.nn.Module):
         # Define an activation function
         self.activation_fn = torch.nn.ReLU()
 
-        # Define the softmax function that should be applied along the
-        # second axis (i.e. the feature axis)
-        self.softmax_fn = torch.nn.Softmax(dim=1)
 
     def forward(self, data_dict, t):
         """
@@ -51,20 +44,19 @@ class DenoisingModel(torch.nn.Module):
             data_dict (dict): Dictionary holding the data as torch tensors.
                 Required dictionary-key is 'x' and potential dictionary-key
                 is 'y'.
-            t (torch.tensor): Time as torch tensor.
+            t (torch.tensor): (Batched) time as torch tensor of shape (batch_size, 1).
+
+        Return:
+            (torch.tensor): (Batched) transition energy/score to go from input state (in data_dict)
+                to all states one can transition to as 2D torch tensor of shape (batch_size, dim[encoded(x)]).
         
         """
         # Access the data
-        x = data_dict['x']
+        x_encoded = data_dict['x']
 
         # print("In forward of 'model'.")
         # print(f"x.shape: {x.shape}")
         # print(f"x[:10]: {x[:10]}")
-
-        # Encode the spatial features of the data (i.e. x)
-        x_encoded = self.encode_space(x)
-        #print(f"x_encoded.shape: {x_encoded.shape}")
-        #print(f"x_encoded[:10]: {x_encoded[:10]}")
 
         # Encode the time input t
         t_encoded = self.encode_time(t)
@@ -83,10 +75,7 @@ class DenoisingModel(torch.nn.Module):
         h = self.activation_fn(h)
         h = self.linear_3(h)
 
-        # Apply a softmax function to obtain class probabilities
-        probs = self.softmax_fn(h)
-
-        return probs
+        return h
     
 class PropertyModel(torch.nn.Module):
     def __init__(self, x_enc_dim, t_dim=1, y_dim=1, lat_dim=100):
@@ -101,10 +90,6 @@ class PropertyModel(torch.nn.Module):
 
         # Define the input and output dimension, based on the
         self.input_dim  = x_enc_dim + t_dim
-
-        # Define an encoding for the x-values (i.e. categoricals)
-        spatial_encoding  = encodings.OneHotEncoding1D(dim=self.x_enc_dim)
-        self.encode_space = lambda x: spatial_encoding(x)
 
         # Define an encoding for the times (passed as scalars)
         #time_encoding = FourierEncoding(dim=self.t_dim)
@@ -128,18 +113,20 @@ class PropertyModel(torch.nn.Module):
         self.softmax_fn = torch.nn.Softmax(dim=1)
 
     
-    def forward(self, x, t):
+    def forward(self, x_encoded, t):
         """
         Define forward pass of the model. 
         
         Args:
-            x (torch.tensor): Torch tensor holding the x-values of the data.
-            t (torch.tensor): Time as torch tensor.
+            x_encoded (torch.tensor): (Batched) encoded x-values of the data as 2D torch
+                tensor of shape (batch_size, dim[encoded(x)])
+            t (torch.tensor): (Batched) time as torch tensor.
+
+        Return:
+            (torch.tensor): Probabilities for each component of the encoded property 'y'
+                as 2D torch tensor of shape (batch_size, dim[encoded(y)])
         
         """
-        # Encode the spatial features of the data (i.e. x)
-        x_encoded = self.encode_space(x)
-
         # Encode the time input t
         t_encoded = self.encode_time(t)
         #print(f"t_encoded.shape: {t_encoded.shape}")
@@ -147,6 +134,8 @@ class PropertyModel(torch.nn.Module):
 
         # Concatenate x and the encoded t along the feature axis (second axis)
         xt = torch.cat([x_encoded, t_encoded], dim=1)
+        # print(f"x_encoded.shape: {x_encoded.shape}")
+        # print(f"xt.shape: {xt.shape}")
 
         # Perform pass through the network
         h = self.linear_1(xt)
@@ -158,17 +147,18 @@ class PropertyModel(torch.nn.Module):
 
         return y
 
-    def log_prob(self, x, t, y_data):
+    def log_prob(self, x_encoded, t, y_data):
         """
         Return the log probability given the data. 
         
         Args:
-            x (torch.tensor): Torch tensor holding the x-values of the data.
-            t (torch.tensor): Time as torch tensor.
-            y_data (torch.tensor): Torch tensor holding the y-values of the data.
+            x_encoded (torch.tensor): (Batched) encoded x-values of the data as 2D torch
+                tensor of shape (batch_size, dim[encoded(x)])
+            t (torch.tensor): (Batched) time as torch tensor.
+            y_data (torch.tensor): (Batched) torch tensor holding the y-values of the data.
 
         Return:
-            (torch.tensor): log-probability for each point in the batch as
+            (torch.tensor): (Batched) log-probability for each point in the batch as
                 1D torch tensor of shape (batch_size, ).
         
         """
@@ -176,7 +166,7 @@ class PropertyModel(torch.nn.Module):
         y_data_encoded = self.encode_y(y_data)
 
         # Predict y for the inputs
-        y_pred = self.forward(x, t)
+        y_pred = self.forward(x_encoded, t)
 
         # print(f"y_data.shape: {y_data.shape}")
         # print(f"y_data[:10] {y_data[:10]}")
